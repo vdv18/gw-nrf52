@@ -13,8 +13,6 @@ void delay(uint32_t tick)
 
 void main()
 {
-  
-  
   NRF_P0->DIRSET = 0xF<<17;
   while(1){
     delay(3000000);
