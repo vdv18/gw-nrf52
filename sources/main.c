@@ -2,8 +2,10 @@
 #include "ble.h"
 #include "nrf_sdm.h"
 
-static uint8_t buffer_in[0x4] = {0x12,0x34,0x56,0x78};
-static uint8_t buffer_out[0x4] = {0x12,0x34,0x56,0x78};
+#include <stdlib.h>
+
+static uint8_t buffer_in[0x80] = {0x12,0x34,0x56,0x78};
+static uint8_t buffer_out[0x80] = {0x12,0x34,0x56,0x78};
 void delay(uint32_t tick)
 {
   volatile uint32_t temp = tick;
@@ -85,10 +87,131 @@ void spis_init(void)
   NRF_SPIS0->TXD.MAXCNT = sizeof(buffer_out);
   NRF_SPIS0->TASKS_ACQUIRE = 1;
 }
+
+static void ble_stack_init()
+{
+  
+}
+void assertion_handler(uint32_t id, uint32_t pc, uint32_t info)
+{
+  while(1);
+}
+static ble_gap_adv_params_t m_adv_params;   
+uint32_t ble_init()
+{
+  uint32_t ret_code;
+  nrf_clock_lf_cfg_t clock;
+  ble_cfg_t ble_cfg;
+  uint32_t *app_ram_start = (uint32_t*)0x2000b668;
+  
+  clock.source = NRF_CLOCK_LF_SRC_XTAL;
+  clock.rc_ctiv = 0;
+  clock.rc_temp_ctiv = 0;
+  clock.accuracy = NRF_CLOCK_LF_ACCURACY_20_PPM;
+  ret_code = sd_softdevice_enable(&clock, assertion_handler);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  NVIC_EnableIRQ(SWI2_EGU2_IRQn);
+  
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_cfg.conn_cfg.conn_cfg_tag = 1;
+  ble_cfg.conn_cfg.params.gap_conn_cfg.conn_count = 1;
+  ble_cfg.conn_cfg.params.gap_conn_cfg.event_length = 3;
+  
+  ret_code = sd_ble_cfg_set(BLE_CONN_CFG_GAP, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_cfg.gap_cfg.role_count_cfg.periph_role_count  = 1;
+  ble_cfg.gap_cfg.role_count_cfg.central_role_count = 0;
+  ble_cfg.gap_cfg.role_count_cfg.central_sec_count  = 0;           
+  ret_code = sd_ble_cfg_set(BLE_GAP_CFG_ROLE_COUNT, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_cfg.conn_cfg.conn_cfg_tag                 = 1;
+  ble_cfg.conn_cfg.params.gatt_conn_cfg.att_mtu = 23;
+  ret_code = sd_ble_cfg_set(BLE_CONN_CFG_GATT, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+    
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_cfg.common_cfg.vs_uuid_cfg.vs_uuid_count = 0;
+  ret_code = sd_ble_cfg_set(BLE_COMMON_CFG_VS_UUID, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_gatts_cfg_attr_tab_size_t table =
+  {
+      .attr_tab_size = 248
+  };
+  ble_cfg.gatts_cfg.attr_tab_size = table;
+  ret_code = sd_ble_cfg_set(BLE_GATTS_CFG_ATTR_TAB_SIZE, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_gatts_cfg_service_changed_t sc =
+  {
+      .service_changed = 0
+  };
+  ble_cfg.gatts_cfg.service_changed = sc;
+  ret_code = sd_ble_cfg_set(BLE_GATTS_CFG_SERVICE_CHANGED, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  
+  ret_code = sd_ble_enable(app_ram_start);
+  
+  // Adverizing init
+  static uint8_t data[0x23] = "     BGM111 S";
+  static uint8_t scan_data[0x23] = "  ";
+  data[0] = 0x02;
+  data[1] = 0x01;
+  data[2] = 0x04;
+  data[3] = 0x09;
+  data[4] = 0x08;
+  ret_code = sd_ble_gap_adv_data_set(data, 13, 0, 0);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  //
+  memset(&m_adv_params, 0, sizeof(m_adv_params));
+
+  m_adv_params.type        = BLE_GAP_ADV_TYPE_ADV_NONCONN_IND;
+  m_adv_params.p_peer_addr = 0;    // Undirected advertisement.
+  m_adv_params.fp          = BLE_GAP_ADV_FP_ANY;
+  m_adv_params.interval    = 50*20*8; //(100*1000/625)
+  m_adv_params.timeout     = 0;       // Never time out.
+  ret_code = sd_ble_gap_adv_start(&m_adv_params, 1);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  
+}
 void main()
 {
+  ble_init();
   static uint32_t pins = 0;
-  SCB->VTOR = 0x23000;
+  //SCB->VTOR = 0x23000;
   NRF_P0->DIRCLR = 0x1F<<11;
   
   NRF_P0->PIN_CNF[11] = 0;
@@ -122,6 +245,10 @@ void main()
 //                               | ((uint32_t)0 << GPIO_PIN_CNF_DRIVE_Pos)
 //                               | ((uint32_t)0 << GPIO_PIN_CNF_SENSE_Pos);
   spis_init();
+  
+  
+  
+  
   while(1){
     
     //pins = NRF_P0->IN;
