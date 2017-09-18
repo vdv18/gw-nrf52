@@ -88,16 +88,14 @@ void spis_init(void)
   NRF_SPIS0->TASKS_ACQUIRE = 1;
 }
 
-static void ble_stack_init()
-{
-  
-}
 void assertion_handler(uint32_t id, uint32_t pc, uint32_t info)
 {
-  while(1);
+  while(1){
+    NVIC_SystemReset();
+  };
 }
 static ble_gap_adv_params_t m_adv_params;   
-uint32_t ble_init()
+uint32_t ble_adv_init()
 {
   uint32_t ret_code;
   nrf_clock_lf_cfg_t clock;
@@ -207,9 +205,188 @@ uint32_t ble_init()
   }
   
 }
+
+
+#define SCAN_INTERVAL             0x00A0                                /**< Determines scan interval in units of 0.625 millisecond. */
+#define SCAN_WINDOW               0x0050                                /**< Determines scan window in units of 0.625 millisecond. */
+#define SCAN_TIMEOUT              0x0000    
+static ble_gap_scan_params_t const m_scan_params =
+{
+    .active   = 0,
+    .interval = SCAN_INTERVAL,
+    .window   = SCAN_WINDOW,
+    .timeout  = SCAN_TIMEOUT,
+    #if (NRF_SD_BLE_API_VERSION <= 2)
+        .selective   = 0,
+        .p_whitelist = NULL,
+    #endif
+    #if (NRF_SD_BLE_API_VERSION >= 3)
+        .use_whitelist  = 0,
+        .adv_dir_report = 0,
+    #endif
+};
+#define MIN_CONNECTION_INTERVAL   (7.5*1000/1250)      /**< Determines minimum connection interval in milliseconds. */
+#define MAX_CONNECTION_INTERVAL   (30*1000/1250)       /**< Determines maximum connection interval in milliseconds. */
+#define SLAVE_LATENCY             0                                     /**< Determines slave latency in terms of connection events. */
+#define SUPERVISION_TIMEOUT       (4000*1000/10000)       /**< Determines supervision time-out in units of 10 milliseconds. */
+
+/**@brief Connection parameters requested for connection. */
+static ble_gap_conn_params_t const m_connection_param =
+{
+    (uint16_t)MIN_CONNECTION_INTERVAL,
+    (uint16_t)MAX_CONNECTION_INTERVAL,
+    (uint16_t)SLAVE_LATENCY,
+    (uint16_t)SUPERVISION_TIMEOUT
+};
+uint32_t ble_central_init()
+{
+  uint32_t ret_code;
+  nrf_clock_lf_cfg_t clock;
+  ble_cfg_t ble_cfg;
+  uint32_t *app_ram_start = (uint32_t*)0x2000b668;
+  
+  clock.source = NRF_CLOCK_LF_SRC_XTAL;
+  clock.rc_ctiv = 0;
+  clock.rc_temp_ctiv = 0;
+  clock.accuracy = NRF_CLOCK_LF_ACCURACY_20_PPM;
+  ret_code = sd_softdevice_enable(&clock, assertion_handler);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  NVIC_EnableIRQ(SWI2_EGU2_IRQn);
+  
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_cfg.conn_cfg.conn_cfg_tag = 1;
+  ble_cfg.conn_cfg.params.gap_conn_cfg.conn_count = 8;
+  ble_cfg.conn_cfg.params.gap_conn_cfg.event_length = 3;
+  
+  ret_code = sd_ble_cfg_set(BLE_CONN_CFG_GAP, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_cfg.gap_cfg.role_count_cfg.periph_role_count  = 0;
+  ble_cfg.gap_cfg.role_count_cfg.central_role_count = 8;
+  ble_cfg.gap_cfg.role_count_cfg.central_sec_count  = 1;           
+  ret_code = sd_ble_cfg_set(BLE_GAP_CFG_ROLE_COUNT, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_cfg.conn_cfg.conn_cfg_tag                 = 1;
+  ble_cfg.conn_cfg.params.gatt_conn_cfg.att_mtu = 23;
+  ret_code = sd_ble_cfg_set(BLE_CONN_CFG_GATT, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+    
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_cfg.common_cfg.vs_uuid_cfg.vs_uuid_count = 1;
+  ret_code = sd_ble_cfg_set(BLE_COMMON_CFG_VS_UUID, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_gatts_cfg_attr_tab_size_t table =
+  {
+      .attr_tab_size = 1408
+  };
+  ble_cfg.gatts_cfg.attr_tab_size = table;
+  ret_code = sd_ble_cfg_set(BLE_GATTS_CFG_ATTR_TAB_SIZE, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  
+  memset(&ble_cfg, 0, sizeof(ble_cfg));
+  ble_gatts_cfg_service_changed_t sc =
+  {
+      .service_changed = 0
+  };
+  ble_cfg.gatts_cfg.service_changed = sc;
+  ret_code = sd_ble_cfg_set(BLE_GATTS_CFG_SERVICE_CHANGED, &ble_cfg, *app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }
+  
+  ret_code = sd_ble_enable(app_ram_start);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }  
+  ret_code = sd_ble_gap_scan_start(&m_scan_params);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return ret_code;
+  }  
+}
+static uint32_t adv_report_count = 0;
+static uint32_t connect = 1;
+static uint32_t connected = 0;
+static uint32_t conn_cnt = 0;
+static uint32_t disconn_cnt = 0; 
+static void ble_handler()
+{
+  uint32_t ret_code = 0;
+  ble_evt_t * p_ble_evt;
+  uint8_t evt_buffer[56];
+  uint16_t evt_len = 56;
+  ret_code = sd_ble_evt_get(evt_buffer, &evt_len);
+  if (ret_code != NRF_SUCCESS)
+  {
+      return;
+  }
+  p_ble_evt = (ble_evt_t *)evt_buffer;
+  
+  switch(p_ble_evt->header.evt_id)
+  {
+    case BLE_GAP_EVT_CONNECTED:
+      {
+        connected = 1;
+        conn_cnt++;
+      }
+      break;
+    case BLE_GAP_EVT_DISCONNECTED:
+      {
+        connected = 0;
+        connect = 1;
+        disconn_cnt++;
+        sd_ble_gap_scan_start(&m_scan_params); 
+      }
+      break;
+    case BLE_GAP_EVT_ADV_REPORT:
+      {
+        uint8_t conn_cfg_tag;
+        ble_gap_evt_t  const * p_gap_evt  = &p_ble_evt->evt.gap_evt;
+        ble_gap_addr_t const * p_peer_addr  = &p_gap_evt->params.adv_report.peer_addr;
+        if(connect)
+        {
+          sd_ble_gap_connect(p_peer_addr,&m_scan_params,&m_connection_param,1);
+          connect = 0;
+        }
+      }
+      adv_report_count++;
+      break;
+  }
+  
+}
+void SWI2_EGU2_IRQHandler()
+{
+  ble_handler();
+}
 void main()
 {
-  ble_init();
+  //ble_adv_init();
+  ble_central_init();
   static uint32_t pins = 0;
   //SCB->VTOR = 0x23000;
   NRF_P0->DIRCLR = 0x1F<<11;
@@ -250,7 +427,6 @@ void main()
   
   
   while(1){
-    
     //pins = NRF_P0->IN;
     //delay(3000000);
     //NRF_P0->OUTSET = 0xF<<17;
