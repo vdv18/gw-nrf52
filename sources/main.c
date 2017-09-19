@@ -4,6 +4,18 @@
 
 #include <stdlib.h>
 
+#define NUS_BASE_UUID                  {0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0, 0x93, 0xF3, 0xA3, 0xB5, 0x00, 0x00, 0x40, 0x6E}
+#define MGT_BASE_UUID                  {0x5C, 0xAC, 0x70, 0x65, 0x9D, 0x84, 0x5D, 0x86, 0xF3, 0x46, 0xDE, 0x32, 0x00, 0x00, 0xE0, 0x62}
+#define MGT_BASE_UUID_WRITE            0x1601
+#define MGT_BASE_UUID_NOTIFY           0x1602
+
+#define BLE_UUID_NUS_TX_CHARACTERISTIC 0x0003                      /**< The UUID of the TX Characteristic. */
+#define BLE_UUID_NUS_RX_CHARACTERISTIC 0x0002                      /**< The UUID of the RX Characteristic. */
+#define NUS_BASE_UUID                  {{0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0, 0x93, 0xF3, 0xA3, 0xB5, 0x00, 0x00, 0x40, 0x6E}} /**< Used vendor specific UUID. */
+
+
+static uint8_t uuid[0x10] = NUS_BASE_UUID_WRITE;
+
 static uint8_t buffer_in[0x80] = {0x12,0x34,0x56,0x78};
 static uint8_t buffer_out[0x80] = {0x12,0x34,0x56,0x78};
 void delay(uint32_t tick)
@@ -329,17 +341,62 @@ uint32_t ble_central_init()
       return ret_code;
   }  
 }
+
+/**
+ * @brief Parses advertisement data, providing length and location of the field in case
+ *        matching data is found.
+ *
+ * @param[in]  type       Type of data to be looked for in advertisement data.
+ * @param[in]  p_advdata  Advertisement report length and pointer to report.
+ * @param[out] p_typedata If data type requested is found in the data report, type data length and
+ *                        pointer to data will be populated here.
+ *
+ * @retval NRF_SUCCESS if the data type is found in the report.
+ * @retval NRF_ERROR_NOT_FOUND if the data type could not be found.
+ */
+typedef struct
+{
+    uint16_t  size;                 /**< Number of array entries. */
+    uint8_t * p_data;               /**< Pointer to array entries. */
+} uint8_array_t;
+static uint32_t adv_report_parse(uint8_t type, uint8_array_t * p_advdata, uint8_array_t * p_typedata)
+{
+    uint32_t  index = 0;
+    uint8_t * p_data;
+
+    p_data = p_advdata->p_data;
+
+    while (index < p_advdata->size)
+    {
+        uint8_t field_length = p_data[index];
+        uint8_t field_type   = p_data[index + 1];
+
+        if (field_type == type)
+        {
+            p_typedata->p_data = &p_data[index + 2];
+            p_typedata->size   = field_length - 1;
+            return NRF_SUCCESS;
+        }
+        index += field_length + 1;
+    }
+    return NRF_ERROR_NOT_FOUND;
+}
+
+
 static uint32_t adv_report_count = 0;
 static uint32_t connect = 1;
 static uint32_t connected = 0;
 static uint32_t conn_cnt = 0;
 static uint32_t disconn_cnt = 0; 
+static uint8_array_t adv_data;
+static uint8_array_t adv_type;
 static void ble_handler()
 {
   uint32_t ret_code = 0;
   ble_evt_t * p_ble_evt;
-  uint8_t evt_buffer[56];
-  uint16_t evt_len = 56;
+  static uint8_t evt_buffer[56];
+  static uint16_t evt_len = 56;
+  evt_len = 56;
   ret_code = sd_ble_evt_get(evt_buffer, &evt_len);
   if (ret_code != NRF_SUCCESS)
   {
@@ -368,11 +425,20 @@ static void ble_handler()
         uint8_t conn_cfg_tag;
         ble_gap_evt_t  const * p_gap_evt  = &p_ble_evt->evt.gap_evt;
         ble_gap_addr_t const * p_peer_addr  = &p_gap_evt->params.adv_report.peer_addr;
+        adv_data.p_data = (uint8_t *)p_gap_evt->params.adv_report.data;
+        adv_data.size   = p_gap_evt->params.adv_report.dlen;
+        if(adv_report_parse(BLE_GAP_AD_TYPE_COMPLETE_LOCAL_NAME,&adv_data,&adv_type) == NRF_SUCCESS) 
+          connect = 1;
+        else if(adv_report_parse(BLE_GAP_AD_TYPE_SHORT_LOCAL_NAME,&adv_data,&adv_type) == NRF_SUCCESS)
+          connect = 1;
+        else 
+          connect = 0;
         if(connect)
         {
           sd_ble_gap_connect(p_peer_addr,&m_scan_params,&m_connection_param,1);
           connect = 0;
         }
+        
       }
       adv_report_count++;
       break;
@@ -383,6 +449,7 @@ void SWI2_EGU2_IRQHandler()
 {
   ble_handler();
 }
+
 void main()
 {
   //ble_adv_init();
