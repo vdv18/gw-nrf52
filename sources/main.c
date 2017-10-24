@@ -14,10 +14,10 @@
 #define NUS_BASE_UUID                  {{0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0, 0x93, 0xF3, 0xA3, 0xB5, 0x00, 0x00, 0x40, 0x6E}} /**< Used vendor specific UUID. */
 
 
-static uint8_t uuid[0x10] = NUS_BASE_UUID_WRITE;
+static uint8_t uuid[0x10] = MGT_BASE_UUID;
 
-static uint8_t buffer_in[0x80] = {0x12,0x34,0x56,0x78};
-static uint8_t buffer_out[0x80] = {0x12,0x34,0x56,0x78};
+static uint8_t buffer_in[0x80] = {0x00,0x00,0x00,0x00};
+static uint8_t buffer_out[0x80] = {0x00,0x00,0x00,0x00};
 void delay(uint32_t tick)
 {
   volatile uint32_t temp = tick;
@@ -35,7 +35,7 @@ void SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0_IRQHandler(void)
     
     NRF_SPIS0->TXD.PTR = (uint32_t)buffer_out;
     NRF_SPIS0->TXD.MAXCNT = sizeof(buffer_out);
-    
+    buffer_out[0] = 0;
     NRF_SPIS0->TASKS_RELEASE = 0x1UL;
     NRF_SPIS0->EVENTS_ACQUIRED = 0x0;
   }
@@ -190,7 +190,7 @@ uint32_t ble_adv_init()
   ret_code = sd_ble_enable(app_ram_start);
   
   // Adverizing init
-  static uint8_t data[0x23] = "     BGM111 S";
+  static uint8_t data[0x23] = "     TEST11 S";
   static uint8_t scan_data[0x23] = "  ";
   data[0] = 0x02;
   data[1] = 0x01;
@@ -208,7 +208,7 @@ uint32_t ble_adv_init()
   m_adv_params.type        = BLE_GAP_ADV_TYPE_ADV_NONCONN_IND;
   m_adv_params.p_peer_addr = 0;    // Undirected advertisement.
   m_adv_params.fp          = BLE_GAP_ADV_FP_ANY;
-  m_adv_params.interval    = 50*20*8; //(100*1000/625)
+  m_adv_params.interval    = 5*2*8*2; //(100*1000/625)
   m_adv_params.timeout     = 0;       // Never time out.
   ret_code = sd_ble_gap_adv_start(&m_adv_params, 1);
   if (ret_code != NRF_SUCCESS)
@@ -281,7 +281,7 @@ uint32_t ble_central_init()
   
   memset(&ble_cfg, 0, sizeof(ble_cfg));
   ble_cfg.gap_cfg.role_count_cfg.periph_role_count  = 0;
-  ble_cfg.gap_cfg.role_count_cfg.central_role_count = 8;
+  ble_cfg.gap_cfg.role_count_cfg.central_role_count = 1;
   ble_cfg.gap_cfg.role_count_cfg.central_sec_count  = 1;           
   ret_code = sd_ble_cfg_set(BLE_GAP_CFG_ROLE_COUNT, &ble_cfg, *app_ram_start);
   if (ret_code != NRF_SUCCESS)
@@ -435,7 +435,8 @@ static void ble_handler()
           connect = 0;
         if(connect)
         {
-          sd_ble_gap_connect(p_peer_addr,&m_scan_params,&m_connection_param,1);
+          buffer_out[0] |= 1;
+          //sd_ble_gap_connect(p_peer_addr,&m_scan_params,&m_connection_param,1);
           connect = 0;
         }
         
@@ -452,8 +453,34 @@ void SWI2_EGU2_IRQHandler()
 
 void main()
 {
-  //ble_adv_init();
-  ble_central_init();
+  NRF_CLOCK->TASKS_HFCLKSTART = 1;
+  {
+    volatile int temp = 99999;
+    while(temp>0){temp--;
+  NRF_CLOCK->LFCLKSRC = 1;}
+  }
+  NRF_CLOCK->TASKS_LFCLKSTART = 1;
+  {
+    volatile int temp = 9999999;
+    while(temp>0){temp--;}
+  }
+  if(NRF_CLOCK->HFCLKSTAT & (1 | (1<<16)) == (1 | (1<<16)))
+    buffer_out[1] |= 2;
+  else
+    buffer_out[1] &=~2;
+  if(NRF_CLOCK->LFCLKSTAT & (1 | (1<<16)) == (1 | (1<<16)))
+    buffer_out[1] |= 1;
+  else
+    buffer_out[1] &=~1;
+  NRF_CLOCK->TASKS_LFCLKSTOP = 1;
+  NRF_CLOCK->TASKS_HFCLKSTOP = 1;
+  {
+    volatile int temp = 9999999;
+    while(temp>0){temp--;}
+  }
+  
+  ble_adv_init();
+  //ble_central_init();
   static uint32_t pins = 0;
   //SCB->VTOR = 0x23000;
   NRF_P0->DIRCLR = 0x1F<<11;
@@ -491,9 +518,43 @@ void main()
   spis_init();
   
   
-  
-  
   while(1){
+
+    NRF_P0->PIN_CNF[5] = ((uint32_t)GPIO_PIN_CNF_DIR_Output << GPIO_PIN_CNF_DIR_Pos)
+                               | ((uint32_t)0 << GPIO_PIN_CNF_INPUT_Pos)
+                               | ((uint32_t)0 << GPIO_PIN_CNF_PULL_Pos)
+                               | ((uint32_t)GPIO_PIN_CNF_DRIVE_S0S1 << GPIO_PIN_CNF_DRIVE_Pos)
+                               | ((uint32_t)0 << GPIO_PIN_CNF_SENSE_Pos); 
+    NRF_P0->OUTSET = 1<<5;
+    {volatile uint32_t temp = 999999; while(temp>0){temp--;};}  
+    NRF_P0->OUTCLR = 1<<5; 
+    {volatile uint32_t temp = 999999; while(temp>0){temp--;};}
+    NRF_P0->PIN_CNF[5] = ((uint32_t)GPIO_PIN_CNF_DIR_Input << GPIO_PIN_CNF_DIR_Pos)
+                               | ((uint32_t)0 << GPIO_PIN_CNF_INPUT_Pos)
+                               | ((uint32_t)0 << GPIO_PIN_CNF_PULL_Pos)
+                               | ((uint32_t)GPIO_PIN_CNF_DRIVE_S0S1 << GPIO_PIN_CNF_DRIVE_Pos)
+                               | ((uint32_t)0 << GPIO_PIN_CNF_SENSE_Pos);
+     
+    if(buffer_in[1] & 1 == 1)
+    {
+        NRF_P0->PIN_CNF[11] = 0;
+        NRF_P0->PIN_CNF[12] = 0;
+        NRF_P0->PIN_CNF[13] = 0;
+        NRF_P0->PIN_CNF[14] = 0;
+        NRF_P0->PIN_CNF[15] = 0;
+        sd_ble_gap_scan_stop();
+        sd_softdevice_disable();
+        if ((*(uint32_t *)0x40005410 & 0x07) == 0)
+        {
+          NRF_NFCT->TASKS_SENSE = 1;
+        }
+        {volatile uint32_t temp = 999999; while(temp>0){temp--;};}
+        // Enter System OFF mode.
+        NRF_POWER->SYSTEMOFF = 1;
+        __WFE();
+        __WFE();
+    }
+    
     //pins = NRF_P0->IN;
     //delay(3000000);
     //NRF_P0->OUTSET = 0xF<<17;
